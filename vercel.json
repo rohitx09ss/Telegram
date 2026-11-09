@@ -1,40 +1,12 @@
-
 {
   "version": 2,
   "builds": [
-    {
-      "src": "public/**",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python"
-    }
+    {"src": "public/**", "use": "@vercel/static"},
+    {"src": "api/index.py", "use": "@vercel/python"}
   ],
   "routes": [
-    {
-      "src": "^/$",
-      "dest": "/public/index.html"
-    },
-    {
-      "src": "^/admin/?$",
-      "dest": "/public/admin.html"
-    },
-    {
-      "src": "^/style\\.css$",
-      "dest": "/public/style.css"
-    },
-    {
-      "src": "^/admin\\.js$",
-      "dest": "/public/admin.js"
-    },
-    {
-      "src": "^/api/(.*)$",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "^/(.*)$",
-      "dest": "/api/index.py"
-    }
+    {"src": "^/api/(.*)$", "dest": "/api/index.py"},
+    {"src": "^/admin/?$", "dest": "/public/admin.html"},
+    {"src": "^/(.*)$", "dest": "/public/$1"}
   ]
 }

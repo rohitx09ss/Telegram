@@ -1,50 +1,36 @@
-# NumberHub — Vercel starter
+# NumberHub — Vercel + MongoDB
 
-A no-payment number inventory dashboard with a Flask REST API and MongoDB.
+## Vercel environment variables
+Set `MONGODB_URI`, `MONGODB_DB`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `FLASK_SECRET_KEY`.
+Use a MongoDB database user with only the permissions this app needs. Never commit `.env`.
 
-## Safety and authorization
-Only add phone numbers you own or are authorized to administer. Only store and distribute OTP records when you have explicit authorization from the number owner and the intended recipient. Do not use this system to intercept verification codes, bypass account security, or access third-party accounts.
-
-## Features
-- Admin login using environment credentials
-- Add, edit, delete phone-number inventory records
-- Country-code field and optional authorized OTP record
-- API key generation, one at a time, maximum 10 active keys
-- Revoke or delete API keys
-- API key plaintext is shown only once; only SHA-256 hashes are stored
-- REST endpoints for available number inventory and authorized OTP records
-
-## Deploy to Vercel
-1. Create a MongoDB Atlas free-tier cluster and database user. Allow network access from Vercel according to your security requirements.
-2. Push this folder to a GitHub repository.
-3. Import the repository into Vercel.
-4. Add these Environment Variables in Vercel:
-   - `MONGODB_URI`
-   - `MONGODB_DB` (for example `numberhub`)
-   - `ADMIN_USERNAME`
-   - `ADMIN_PASSWORD` (use a long unique password)
-   - `FLASK_SECRET_KEY` (use a cryptographically random secret)
-5. Deploy. Open `/admin` and sign in.
+## CSV format
+CSV header: `country_code,phone`
+Example:
+```csv
+country_code,phone
++91,8928066524
++91,9876543210
+```
+This import deliberately ignores OTP/password columns. It is for authorized number inventory only.
 
 ## API
-All API endpoints require `X-API-Key`.
+Send header `X-API-Key: YOUR_KEY`.
+- `GET /api/health`
+- `GET /api/numbers/available`
+- `POST /api/numbers/reserve` JSON `{"number_id":"..."}`
+- `GET /api/orders/ORDER_ID`
 
-### List available numbers
-`GET /api/numbers`
+## Deploy
+Import this repository into Vercel. Framework: Other; Root Directory: `./`; leave build/output overrides blank. Add environment variables and deploy.
 
-### Read an authorized OTP record
-`GET /api/numbers/{international_phone}/otp`
+## Important security notes
+This is a minimal starter, not a production-hardened commercial service. Before real customer use add rate limits, CSRF protection for admin actions, audit logs, customer/order ownership binding, reservation expiry, and monitoring. Do not distribute preloaded OTPs or passwords to arbitrary API customers. Verification codes should only be generated for a user-initiated flow by a service you control and delivered to the authorized recipient. Keep customer data and phone numbers only with appropriate consent and legal basis.
 
-### Health
-`GET /api/health`
 
-Example:
-```bash
-curl -H "X-API-Key: YOUR_KEY" https://YOUR-DOMAIN/api/numbers
-```
+## Admin inventory updates
+- Select multiple active numbers and export them as CSV (phone numbers only; no OTP values).
+- Deleting an active number archives its number, status, timestamp, and reason in `deleted_numbers`, then removes it from active inventory.
+- Deleted History is visible in the admin panel.
 
-## Important deployment notes
-- Vercel Hobby has usage limits and is intended for personal, non-commercial use. Check current Vercel terms before commercial operation.
-- Free tiers are not guaranteed lifetime or unlimited. Usage limits, availability, and provider terms can change.
-- Use HTTPS only. Keep secrets out of GitHub. Rotate the admin password and API keys if exposed.
-- For a production service, add CSRF protection, rate limiting, audit logs, per-customer authorization/ownership checks, and a proper OTP delivery/consent workflow before exposing OTP endpoints publicly.
+This starter does not store, export, or distribute preloaded OTPs. OTP handling should be implemented only for a user-initiated verification challenge, with results restricted to that same authorized user.

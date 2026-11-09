@@ -1,226 +1,245 @@
-import os, re, secrets, hashlib, hmac
+import os, re, csv, io, hashlib, secrets
 from datetime import datetime, timezone
+from pathlib import Path
 from functools import wraps
 from flask import Flask, request, jsonify, session, send_from_directory
-from pymongo import MongoClient, ASCENDING
+from pymongo import MongoClient, ReturnDocument
+from bson import ObjectId
 from pymongo.errors import PyMongoError
 
-app = Flask(__name__, static_folder="../public", static_url_path="")
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "")
-if not app.secret_key:
-    raise RuntimeError("Set FLASK_SECRET_KEY in Vercel Environment Variables")
+ROOT = Path(__file__).resolve().parent.parent
+PUBLIC = ROOT / "public"
+app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "CHANGE-ME-BEFORE-DEPLOYMENT")
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=True, SESSION_COOKIE_SAMESITE="Lax")
 
-MONGODB_URI = os.environ.get("MONGODB_URI", "")
-ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
-if not MONGODB_URI or not ADMIN_PASSWORD:
-    raise RuntimeError("Set MONGODB_URI and ADMIN_PASSWORD in Vercel Environment Variables")
-
-client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-db = client[os.environ.get("MONGODB_DB", "numberhub")]
-numbers = db.numbers
-keys = db.api_keys
-users = db.users
+client = None
+db = None
+try:
+    uri = os.environ["MONGODB_URI"]
+    client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+    client.admin.command("ping")
+    db = client[os.environ.get("MONGODB_DB", "numberhub")]
+except Exception:
+    db = None
 
 def now():
     return datetime.now(timezone.utc).isoformat()
 
-def fail(message, status=400):
-    return jsonify({"ok": False, "error": message}), status
+def db_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if db is None:
+            return jsonify(ok=False, error="Database unavailable"), 503
+        return fn(*args, **kwargs)
+    return wrapper
 
 def admin_required(fn):
     @wraps(fn)
-    def wrapped(*args, **kwargs):
+    def wrapper(*args, **kwargs):
         if not session.get("admin"):
-            return fail("Admin login required", 401)
+            return jsonify(ok=False, error="Admin login required"), 401
         return fn(*args, **kwargs)
-    return wrapped
-
-def hash_key(raw):
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return wrapper
 
 def api_key_required(fn):
     @wraps(fn)
-    def wrapped(*args, **kwargs):
+    def wrapper(*args, **kwargs):
+        if db is None:
+            return jsonify(ok=False, error="Database unavailable"), 503
         raw = request.headers.get("X-API-Key", "")
         if not raw:
-            return fail("Missing X-API-Key header", 401)
-        record = keys.find_one({"key_hash": hash_key(raw), "active": True})
-        if not record:
-            return fail("Invalid or revoked API key", 403)
-        keys.update_one({"_id": record["_id"]}, {"$inc": {"requests": 1}, "$set": {"last_used": now()}})
+            return jsonify(ok=False, error="Missing X-API-Key"), 401
+        digest = hashlib.sha256(raw.encode()).hexdigest()
+        key = db.api_keys.find_one({"hash": digest, "active": True})
+        if not key:
+            return jsonify(ok=False, error="Invalid or revoked API key"), 401
         return fn(*args, **kwargs)
-    return wrapped
+    return wrapper
+
+def public_number(doc):
+    return {
+        "id": str(doc["_id"]),
+        "phone": doc["phone"],
+        "country_code": doc["country_code"],
+        "status": doc["status"]
+    }
 
 @app.get("/")
 def home():
-    return send_from_directory("../public", "index.html")
+    return send_from_directory(PUBLIC, "index.html")
 
 @app.get("/admin")
+@app.get("/admin/")
 def admin_page():
-    return send_from_directory("../public", "admin.html")
+    return send_from_directory(PUBLIC, "admin.html")
+
+@app.get("/<path:name>")
+def static_files(name):
+    target = (PUBLIC / name).resolve()
+    if target.parent != PUBLIC.resolve() or not target.is_file():
+        return jsonify(ok=False, error="Not found"), 404
+    return send_from_directory(PUBLIC, name)
 
 @app.get("/api/health")
 def health():
+    if db is None:
+        return jsonify(ok=False, database="unavailable", service="NumberHub API"), 503
     try:
         client.admin.command("ping")
-        return jsonify({"ok": True, "service": "NumberHub API", "database": "connected"})
+        return jsonify(ok=True, database="connected", service="NumberHub API")
     except Exception:
-        return fail("Database unavailable", 503)
+        return jsonify(ok=False, database="unavailable", service="NumberHub API"), 503
 
 @app.post("/api/admin/login")
 def admin_login():
-    data = request.get_json(silent=True) or {}
-    if hmac.compare_digest(str(data.get("username", "")), ADMIN_USERNAME) and hmac.compare_digest(str(data.get("password", "")), ADMIN_PASSWORD):
-        session.clear()
+    body = request.get_json(silent=True) or {}
+    if (secrets.compare_digest(str(body.get("username","")), os.environ.get("ADMIN_USERNAME","admin"))
+        and secrets.compare_digest(str(body.get("password","")), os.environ.get("ADMIN_PASSWORD",""))):
         session["admin"] = True
-        return jsonify({"ok": True})
-    return fail("Invalid credentials", 401)
+        return jsonify(ok=True)
+    return jsonify(ok=False, error="Invalid credentials"), 401
 
 @app.post("/api/admin/logout")
 def admin_logout():
     session.clear()
-    return jsonify({"ok": True})
+    return jsonify(ok=True)
 
 @app.get("/api/admin/me")
-@admin_required
 def admin_me():
-    return jsonify({"ok": True})
+    return jsonify(ok=bool(session.get("admin")))
 
 @app.get("/api/admin/numbers")
+@db_required
 @admin_required
 def admin_numbers():
-    docs = list(numbers.find().sort("created_at", -1))
-    for d in docs:
-        d["id"] = str(d.pop("_id"))
-    return jsonify({"ok": True, "items": docs})
+    docs = list(db.numbers.find().sort("_id", -1).limit(1000))
+    return jsonify(ok=True, numbers=[public_number(x) for x in docs])
+
+@app.get("/api/admin/deleted")
+@db_required
+@admin_required
+def deleted_numbers():
+    docs = list(db.deleted_numbers.find().sort("deleted_at", -1).limit(1000))
+    rows = [{"id": str(x.get("_id")), "phone": x.get("phone", ""),
+             "country_code": x.get("country_code", ""), "status": x.get("status", ""),
+             "deleted_at": x.get("deleted_at", ""), "reason": x.get("reason", "admin_delete")}
+            for x in docs]
+    return jsonify(ok=True, numbers=rows)
 
 @app.post("/api/admin/numbers")
+@db_required
 @admin_required
 def add_number():
-    data = request.get_json(silent=True) or {}
-    phone = str(data.get("phone", "")).strip()
-    country = str(data.get("country_code", "")).strip()
-    otp = str(data.get("otp", "")).strip()
-    if not re.fullmatch(r"\+[1-9]\d{6,14}", phone):
-        return fail("Enter a valid international phone number, e.g. +918XXXXXXXXX")
-    if not re.fullmatch(r"\+[1-9]\d{0,3}", country):
-        return fail("Country code must look like +91")
-    if otp and not re.fullmatch(r"\d{4,8}", otp):
-        return fail("OTP must contain 4–8 digits")
-    if numbers.find_one({"phone": phone}):
-        return fail("This number already exists", 409)
-    doc = {
-        "phone": phone, "country_code": country, "otp": otp,
-        "status": data.get("status", "available") if data.get("status") in ("available", "used", "disabled") else "available",
-        "created_at": now(), "updated_at": now()
-    }
-    result = numbers.insert_one(doc)
-    return jsonify({"ok": True, "id": str(result.inserted_id)}), 201
+    body = request.get_json(silent=True) or {}
+    phone = re.sub(r"\s+", "", str(body.get("phone","")))
+    cc = str(body.get("country_code","+91")).strip()
+    if not re.fullmatch(r"\+[1-9]\d{0,3}", cc) or not re.fullmatch(r"\d{5,15}", phone):
+        return jsonify(ok=False, error="Valid country_code and phone digits required"), 400
+    if db.numbers.find_one({"phone": phone, "country_code": cc}):
+        return jsonify(ok=False, error="Duplicate number"), 409
+    doc = {"phone": phone, "country_code": cc, "status":"available", "created_at":now()}
+    result = db.numbers.insert_one(doc)
+    return jsonify(ok=True, number_id=str(result.inserted_id)), 201
 
-@app.patch("/api/admin/numbers/<number_id>")
+@app.post("/api/admin/numbers/bulk")
+@db_required
 @admin_required
-def update_number(number_id):
-    from bson import ObjectId
-    data = request.get_json(silent=True) or {}
-    updates = {}
-    for field in ("phone", "country_code", "otp", "status"):
-        if field in data:
-            updates[field] = str(data[field]).strip()
-    if "status" in updates and updates["status"] not in ("available", "used", "disabled"):
-        return fail("Invalid status")
-    if "otp" in updates and updates["otp"] and not re.fullmatch(r"\d{4,8}", updates["otp"]):
-        return fail("OTP must contain 4–8 digits")
-    updates["updated_at"] = now()
+def bulk_numbers():
+    # CSV columns: country_code,phone. OTP/password columns are deliberately ignored.
+    file = request.files.get("file")
+    if not file:
+        return jsonify(ok=False, error="Upload a CSV file using field name 'file'"), 400
     try:
-        result = numbers.update_one({"_id": ObjectId(number_id)}, {"$set": updates})
+        text = file.stream.read().decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(text))
+        added, skipped = 0, 0
+        for row in reader:
+            cc = (row.get("country_code") or row.get("cc") or "+91").strip()
+            phone = re.sub(r"\s+", "", (row.get("phone") or row.get("number") or "").strip())
+            if not re.fullmatch(r"\+[1-9]\d{0,3}", cc) or not re.fullmatch(r"\d{5,15}", phone):
+                skipped += 1; continue
+            if db.numbers.find_one({"phone":phone,"country_code":cc}):
+                skipped += 1; continue
+            db.numbers.insert_one({"phone":phone,"country_code":cc,"status":"available","created_at":now()})
+            added += 1
+        return jsonify(ok=True, added=added, skipped=skipped)
     except Exception:
-        return fail("Invalid number ID")
-    if not result.matched_count:
-        return fail("Number not found", 404)
-    return jsonify({"ok": True})
+        return jsonify(ok=False, error="Could not parse CSV; use UTF-8 CSV with country_code,phone columns"), 400
 
 @app.delete("/api/admin/numbers/<number_id>")
+@db_required
 @admin_required
 def delete_number(number_id):
-    from bson import ObjectId
-    try:
-        result = numbers.delete_one({"_id": ObjectId(number_id)})
-    except Exception:
-        return fail("Invalid number ID")
-    if not result.deleted_count:
-        return fail("Number not found", 404)
-    return jsonify({"ok": True})
+    if not ObjectId.is_valid(number_id):
+        return jsonify(ok=False, error="Invalid number ID"), 400
+    doc = db.numbers.find_one({"_id": ObjectId(number_id)})
+    if not doc:
+        return jsonify(ok=False, error="Number not found"), 404
+    archive = {"phone": doc.get("phone", ""), "country_code": doc.get("country_code", ""),
+               "status": doc.get("status", ""), "deleted_at": now(), "reason": "admin_delete"}
+    db.deleted_numbers.insert_one(archive)
+    db.numbers.delete_one({"_id": ObjectId(number_id)})
+    return jsonify(ok=True)
 
 @app.get("/api/admin/keys")
+@db_required
 @admin_required
 def list_keys():
-    docs = list(keys.find({}, {"key_hash": 0}).sort("created_at", -1))
-    for d in docs:
-        d["id"] = str(d.pop("_id"))
-    return jsonify({"ok": True, "items": docs})
+    docs = list(db.api_keys.find({}, {"hash":0}).sort("_id",-1))
+    for d in docs: d["id"] = str(d.pop("_id"))
+    return jsonify(ok=True, keys=docs)
 
 @app.post("/api/admin/keys")
+@db_required
 @admin_required
 def create_key():
-    active_count = keys.count_documents({"active": True})
-    if active_count >= 10:
-        return fail("Maximum of 10 active API keys reached. Revoke or delete one first.", 409)
-    label = str((request.get_json(silent=True) or {}).get("label", "API key")).strip()[:60] or "API key"
-    raw = "nh_live_" + secrets.token_urlsafe(32)
-    keys.insert_one({
-        "label": label, "key_hash": hash_key(raw), "active": True,
-        "created_at": now(), "last_used": None, "requests": 0
-    })
-    return jsonify({"ok": True, "api_key": raw, "warning": "Copy this key now. It cannot be shown again."}), 201
+    if db.api_keys.count_documents({"active":True}) >= 10:
+        return jsonify(ok=False,error="Maximum 10 active keys. Revoke one first."), 409
+    raw = "nh_" + secrets.token_urlsafe(32)
+    db.api_keys.insert_one({"hash":hashlib.sha256(raw.encode()).hexdigest(),
+                            "label":(request.get_json(silent=True) or {}).get("label","Customer"),
+                            "active":True,"created_at":now()})
+    return jsonify(ok=True, api_key=raw, warning="Copy this key now; it is shown only once."), 201
 
 @app.patch("/api/admin/keys/<key_id>")
+@db_required
 @admin_required
 def revoke_key(key_id):
-    from bson import ObjectId
-    try:
-        result = keys.update_one({"_id": ObjectId(key_id)}, {"$set": {"active": False, "revoked_at": now()}})
-    except Exception:
-        return fail("Invalid key ID")
-    if not result.matched_count:
-        return fail("Key not found", 404)
-    return jsonify({"ok": True})
+    if not ObjectId.is_valid(key_id): return jsonify(ok=False,error="Invalid key ID"),400
+    result = db.api_keys.update_one({"_id":ObjectId(key_id)},{"$set":{"active":False,"revoked_at":now()}})
+    return jsonify(ok=result.modified_count == 1)
 
-@app.delete("/api/admin/keys/<key_id>")
-@admin_required
-def delete_key(key_id):
-    from bson import ObjectId
-    try:
-        result = keys.delete_one({"_id": ObjectId(key_id)})
-    except Exception:
-        return fail("Invalid key ID")
-    if not result.deleted_count:
-        return fail("Key not found", 404)
-    return jsonify({"ok": True})
-
-@app.get("/api/numbers")
+@app.get("/api/numbers/available")
+@db_required
 @api_key_required
-def public_numbers():
-    docs = list(numbers.find({"status": "available"}, {"phone": 1, "country_code": 1, "status": 1}))
-    return jsonify({"ok": True, "count": len(docs), "numbers": [
-        {"phone": d["phone"], "country_code": d["country_code"], "status": d["status"]} for d in docs
-    ]})
+def available_numbers():
+    docs = list(db.numbers.find({"status":"available"}).limit(200))
+    return jsonify(ok=True, numbers=[public_number(x) for x in docs])
 
-@app.get("/api/numbers/<path:phone>/otp")
+@app.post("/api/numbers/reserve")
+@db_required
 @api_key_required
-def public_otp(phone):
-    # Only expose OTP records that the operator is authorized to distribute to this API customer.
-    doc = numbers.find_one({"phone": phone, "status": "available"}, {"otp": 1, "phone": 1})
-    if not doc:
-        return fail("Number not found or unavailable", 404)
-    if not doc.get("otp"):
-        return jsonify({"ok": True, "phone": doc["phone"], "otp_status": "pending", "otp": None})
-    return jsonify({"ok": True, "phone": doc["phone"], "otp_status": "available", "otp": doc["otp"]})
+def reserve_number():
+    body = request.get_json(silent=True) or {}
+    number_id = str(body.get("number_id",""))
+    if not ObjectId.is_valid(number_id): return jsonify(ok=False,error="Invalid number_id"),400
+    order_id = secrets.token_urlsafe(18)
+    doc = db.numbers.find_one_and_update(
+        {"_id":ObjectId(number_id),"status":"available"},
+        {"$set":{"status":"reserved","reserved_at":now(),"order_id":order_id}},
+        return_document=ReturnDocument.AFTER)
+    if not doc: return jsonify(ok=False,error="Number unavailable"),409
+    return jsonify(ok=True,order_id=order_id,number=public_number(doc)),201
+
+@app.get("/api/orders/<order_id>")
+@db_required
+@api_key_required
+def order_status(order_id):
+    doc = db.numbers.find_one({"order_id":order_id})
+    if not doc: return jsonify(ok=False,error="Order not found"),404
+    return jsonify(ok=True,order_id=order_id,status=doc["status"],number=public_number(doc))
 
 @app.errorhandler(404)
 def not_found(_):
-    return fail("Not found", 404)
-
-@app.errorhandler(500)
-def server_error(_):
-    return fail("Internal server error", 500)
+    return jsonify(ok=False,error="Not found"),404
