@@ -1,2 +1,77 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NumberHub API</title><link rel="stylesheet" href="/style.css"></head><body><main class="wrap"><nav><b>NumberHub</b><a href="/admin">Admin</a></nav><section class="hero"><p class="eyebrow">NUMBER INVENTORY API</p><h1>One API.<br>Connected apps.</h1><p>Manage authorized number inventory and connect your own apps or bots using an API key.</p><a class="button" href="/admin">Admin login</a></section><section class="panel"><h2>API quick start</h2><pre>GET /api/numbers/available
-Header: X-API-Key: YOUR_API_KEY</pre><p>Reserve an available inventory item using <code>POST /api/numbers/reserve</code>.</p></section><footer>NumberHub · Authorized inventory management</footer></main></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#17191d"><title>NumberHub — Number Inventory API</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body><main class="wrap">
+<nav><b>NumberHub</b><a href="/admin">Admin</a></nav>
+<section class="hero">
+<p class="eyebrow">NUMBER INVENTORY API</p><h1>One API.<br>Connected apps.</h1>
+<p>Manage authorized number inventory and connect your own apps or bots using a secure API key.</p>
+<a class="button" href="/admin">Admin login</a>
+</section>
+<section class="panel" id="quick-start">
+<p class="eyebrow">01 / QUICK START</p><h2>API quick start</h2>
+<p>Every API request must include your active API key in the <code>X-API-Key</code> header.</p>
+<pre>GET /api/numbers/available
+X-API-Key: YOUR_API_KEY</pre>
+<p>Reserve an available inventory item using <code>POST /api/numbers/reserve</code>.</p>
+</section>
+<section class="panel integration" id="integration-guide">
+<p class="eyebrow">02 / DEVELOPER GUIDE</p><h2>Integrate your app</h2>
+<p class="lead">Connect your own backend or bot in a few steps. Keep your API key on the server—never expose it in browser JavaScript, public repositories, or client-side apps.</p>
+<div class="step"><span class="step-no">1</span><div><h3>Create an API key</h3><p>Open the Admin panel, sign in, go to <b>API keys</b>, enter an app label, and generate a key. Copy it immediately; it is shown only once.</p></div></div>
+<div class="step"><span class="step-no">2</span><div><h3>Check available inventory</h3><p>Call this endpoint from your backend. The response contains inventory IDs and number status—not OTP values.</p><pre>GET https://YOUR-DOMAIN/api/numbers/available
+X-API-Key: YOUR_API_KEY</pre></div></div>
+<div class="step"><span class="step-no">3</span><div><h3>Reserve a number</h3><p>Send the selected inventory ID as JSON. A successful request returns an order ID and the reserved number.</p><pre>POST https://YOUR-DOMAIN/api/numbers/reserve
+Content-Type: application/json
+X-API-Key: YOUR_API_KEY
+
+{
+  "number_id": "NUMBER_ID_FROM_AVAILABLE"
+}</pre></div></div>
+<div class="step"><span class="step-no">4</span><div><h3>Check order status</h3><p>Use the order ID returned by the reserve request.</p><pre>GET https://YOUR-DOMAIN/api/orders/ORDER_ID
+X-API-Key: YOUR_API_KEY</pre></div></div>
+<h3>Example — Python backend</h3>
+<pre>import requests
+
+BASE_URL = "https://YOUR-DOMAIN"
+API_KEY = "YOUR_API_KEY"
+HEADERS = {"X-API-Key": API_KEY}
+
+response = requests.get(
+    f"{BASE_URL}/api/numbers/available",
+    headers=HEADERS,
+    timeout=15
+)
+response.raise_for_status()
+numbers = response.json()["numbers"]
+
+if numbers:
+    result = requests.post(
+        f"{BASE_URL}/api/numbers/reserve",
+        headers={**HEADERS, "Content-Type": "application/json"},
+        json={"number_id": numbers[0]["id"]},
+        timeout=15
+    )
+    result.raise_for_status()
+    print(result.json())</pre>
+<h3>Example — JavaScript backend (Node.js)</h3>
+<pre>const BASE_URL = "https://YOUR-DOMAIN";
+const API_KEY = process.env.NUMBERHUB_API_KEY;
+
+const response = await fetch(
+  `${BASE_URL}/api/numbers/available`,
+  { headers: { "X-API-Key": API_KEY } }
+);
+
+if (!response.ok) throw new Error(`HTTP ${response.status}`);
+const data = await response.json();
+console.log(data.numbers);</pre>
+<div class="notice"><b>Security &amp; OTP handling</b><p>Use NumberHub only for numbers and verification flows you are authorized to manage. OTPs must be tied to a specific, authorized verification challenge and delivered only to its intended recipient. This inventory API does not expose a general “get OTP by phone number” endpoint or bulk OTP export.</p></div>
+<p class="muted">Replace <code>YOUR-DOMAIN</code> with your deployed domain and store the API key in a server-side environment variable.</p>
+</section>
+<footer>NumberHub · Authorized inventory management</footer>
+</main></body></html>
