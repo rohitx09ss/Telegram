@@ -73,5 +73,40 @@ console.log(data.numbers);</pre>
 <div class="notice"><b>Security &amp; OTP handling</b><p>Use NumberHub only for numbers and verification flows you are authorized to manage. OTPs must be tied to a specific, authorized verification challenge and delivered only to its intended recipient. This inventory API does not expose a general “get OTP by phone number” endpoint or bulk OTP export.</p></div>
 <p class="muted">Replace <code>YOUR-DOMAIN</code> with your deployed domain and store the API key in a server-side environment variable.</p>
 </section>
+
+<section class="panel integration" id="ai-integration">
+<p class="eyebrow">03 / INTEGRATE WITH ANY AI</p>
+<h2>Integrate with any AI</h2>
+<p class="lead">Copy this ready-made prompt and paste it into ChatGPT, Claude, Cursor, or another coding assistant to connect your app with NumberHub.</p>
+<pre id="aiPrompt" class="prompt-box"></pre>
+<button type="button" id="copyPromptBtn" onclick="copyIntegrationPrompt()">Copy Prompt</button>
+<span id="copyPromptStatus" class="muted" aria-live="polite"></span>
+</section>
+<script>
+const integrationPrompt = "You are a senior backend integration engineer. Help me integrate my application with NumberHub using the official API details below.\n\nPROJECT\n- NumberHub base URL: https://YOUR-DOMAIN\n- API authentication header: X-API-Key\n- API key: YOUR_API_KEY (use a server-side environment variable; never hard-code or expose it)\n- Available inventory endpoint: GET /api/numbers/available\n- Reserve endpoint: POST /api/numbers/reserve\n- Order status endpoint: GET /api/orders/{order_id}\n\nREQUIREMENTS\n1. First inspect the API response examples and endpoint behavior provided in the NumberHub Developer Guide. Do not invent request fields, response fields, or endpoints.\n2. Implement the integration in my app's existing language/framework and follow its current project structure.\n3. Keep NUMBERHUB_API_KEY on the server only. Never put it in frontend JavaScript, mobile app bundles, public source code, logs, or error messages.\n4. Fetch available inventory from the backend using GET /api/numbers/available and the X-API-Key header.\n5. Reserve a selected inventory item using POST /api/numbers/reserve with the exact request schema documented by NumberHub.\n6. Store the returned order ID and check its status using GET /api/orders/{order_id}.\n7. Add input validation, safe error handling, request timeouts, and clear loading/success/error states.\n8. Do not repeatedly reserve on page refresh. Prevent duplicate submissions and handle unavailable inventory gracefully.\n9. Use NumberHub only for phone numbers and verification workflows that I am authorized to manage. Do not create a general endpoint or feature that reveals stored OTPs by phone number, exposes OTP pools, or exports OTPs in bulk. Any OTP handling must be tied to a specific authorized verification challenge and delivered only to its intended recipient.\n10. Before changing files, explain which files need edits. Then provide complete, runnable code and setup/deployment instructions. List any assumptions and ask for missing API schemas instead of guessing.\n\nNow review my project and implement the safest compatible NumberHub integration.";
+document.getElementById("aiPrompt").textContent = integrationPrompt;
+async function copyIntegrationPrompt() {
+  const button = document.getElementById("copyPromptBtn");
+  const status = document.getElementById("copyPromptStatus");
+  try {
+    await navigator.clipboard.writeText(integrationPrompt);
+    button.textContent = "Copied!";
+    status.textContent = "Prompt copied. Paste it into your AI coding assistant.";
+  } catch (error) {
+    const field = document.createElement("textarea");
+    field.value = integrationPrompt;
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.appendChild(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    field.remove();
+    button.textContent = copied ? "Copied!" : "Copy failed";
+    status.textContent = copied ? "Prompt copied." : "Please select and copy the prompt manually.";
+  }
+  setTimeout(() => button.textContent = "Copy Prompt", 2200);
+}
+</script>
+
 <footer>NumberHub · Authorized inventory management</footer>
 </main></body></html>

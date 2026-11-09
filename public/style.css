@@ -2,6 +2,8 @@
 
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.selectall{display:flex;align-items:center;gap:6px}.selectall input{width:auto;margin:0}.muted{color:#737b88;font-size:13px}.number-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #eceef1}.number-row label{display:flex;align-items:center;gap:9px}.number-row input{width:auto;margin:0}.number-row span{overflow-wrap:anywhere}@media(max-width:520px){.number-row{align-items:flex-start}.toolbar button{flex:1}}
 
+textarea{display:block;width:100%;min-height:150px;resize:vertical;padding:14px;border:1px solid #d6d9df;border-radius:10px;margin:8px 0 14px;font:14px/1.6 ui-monospace,SFMono-Regular,monospace;background:#fbfbfc;color:#17191d}
+
 /* Homepage developer integration guide */
 html{scroll-behavior:smooth}
 .panel h2{margin:4px 0 12px;font-size:clamp(25px,5vw,34px);letter-spacing:-.035em}
@@ -14,3 +16,8 @@ html{scroll-behavior:smooth}
 .notice{margin:24px 0 16px;padding:16px 18px;border:1px solid #e1d6bd;border-radius:12px;background:#fbf8f1}
 .notice b{color:#4a3a1e}.notice p{margin:6px 0 0;color:#655a48}
 @media(max-width:520px){.integration pre{font-size:12px;padding:12px}.step{gap:9px}.notice{padding:14px}}
+
+#ai-integration{margin-top:24px}
+#ai-integration .prompt-box{max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.65;background:#f3f4f6;color:#20242b;border:1px solid #e6e8ec}
+#copyPromptBtn{margin-top:4px;min-width:132px}
+#copyPromptStatus{display:inline-block;margin:8px 0 0 10px}
