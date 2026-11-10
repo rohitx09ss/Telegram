@@ -5,20 +5,20 @@ async function addNumber(){try{await req("/api/admin/numbers",{method:"POST",hea
 async function bulkPasteImport(){
   const raw = bulkPaste.value.trim();
   if(!raw){pasteMsg.textContent="Paste at least one number.";return;}
-  const lines = raw.split(/\\r?\\n/).map(x=>x.trim()).filter(Boolean);
+  const lines = raw.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   const records = [];
   let invalid = 0;
   for(const line of lines){
-    if(/^country_code\\s*,\\s*phone$/i.test(line)) continue;
+    if(/^country_code\s*,\s*phone$/i.test(line)) continue;
     const parts = line.split(",").map(x=>x.trim());
     if(parts.length !== 2){invalid++;continue;}
     const cc = parts[0] || "+91";
-    const phone = parts[1].replace(/\\s+/g,"");
-    if(!/^\\+[1-9]\\d{0,3}$/.test(cc) || !/^\\d{5,15}$/.test(phone)){invalid++;continue;}
+    const phone = parts[1].replace(/\s+/g,"");
+    if(!/^\+[1-9]\d{0,3}$/.test(cc) || !/^\d{5,15}$/.test(phone)){invalid++;continue;}
     records.push({country_code:cc,phone});
   }
   if(!records.length){pasteMsg.textContent=`No valid rows. Invalid: ${invalid}`;return;}
-  const csvText = "country_code,phone\\n" + records.map(x=>`${x.country_code},${x.phone}`).join("\\n");
+  const csvText = "country_code,phone\n" + records.map(x=>`${x.country_code},${x.phone}`).join("\n");
   const fd = new FormData();
   fd.append("file",new Blob([csvText],{type:"text/csv"}),"bulk-paste.csv");
   try{
@@ -36,7 +36,7 @@ function toggleAll(checked){document.querySelectorAll('.number-check').forEach(x
 function exportSelected(){const rows=[...document.querySelectorAll('.number-check:checked')].map(x=>x.closest('.number-row').querySelector('span').textContent.trim());if(!rows.length){alert('Select at least one number');return;}const csv='country_and_phone\n'+rows.map(x=>'"'+x.replaceAll('"','""')+'"').join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='numberhub-selected-numbers.csv';a.click();URL.revokeObjectURL(a.href);}
 async function deleteNumber(id){if(!confirm("Move this number to Deleted History?"))return;await req("/api/admin/numbers/"+id,{method:"DELETE"});loadNumbers();loadDeleted();}
 async function loadDeleted(){try{const d=await req('/api/admin/deleted');deletedNumbers.innerHTML=d.numbers.map(n=>`<div class="number-row"><span>${n.country_code} ${n.phone} · ${n.deleted_at} · ${n.reason}</span><b>Deleted</b></div>`).join('')||'No deleted numbers';}catch(e){deletedNumbers.textContent=e.message;}}
-async function createKey(){try{const d=await req("/api/admin/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({label:label.value||"Customer"})});newKey.textContent=d.api_key+"\\nCopy it now; it will not be shown again.";loadKeys();}catch(e){alert(e.message);}}
+async function createKey(){try{const d=await req("/api/admin/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({label:label.value||"Customer"})});newKey.textContent=d.api_key+"\nCopy it now; it will not be shown again.";loadKeys();}catch(e){alert(e.message);}}
 async function loadKeys(){try{const d=await req("/api/admin/keys");keys.innerHTML=d.keys.map(k=>`<p>${k.label||"Customer"} · ${k.active?"Active":"Revoked"} ${k.active?`<button class="danger" onclick="revokeKey('${k.id}')">Revoke</button>`:""}</p>`).join("")||"No keys";}catch(e){keys.textContent=e.message;}}
 async function revokeKey(id){await req("/api/admin/keys/"+id,{method:"PATCH"});loadKeys();}
 async function logout(){await req("/api/admin/logout",{method:"POST"});boot();}
