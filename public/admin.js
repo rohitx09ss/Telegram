@@ -41,3 +41,6 @@ async function loadKeys(){try{const d=await req("/api/admin/keys");keys.innerHTM
 async function revokeKey(id){await req("/api/admin/keys/"+id,{method:"PATCH"});loadKeys();}
 async function logout(){await req("/api/admin/logout",{method:"POST"});boot();}
 boot().catch(()=>{});
+
+async function bulkOtpPaste(){const text=otpPaste.value.trim();if(!text){otpPasteMsg.textContent="Paste CSV rows first.";return;}try{const fd=new FormData();fd.append("text",text);const d=await req("/api/admin/otps/bulk",{method:"POST",body:fd});otpPasteMsg.textContent=`Attached: ${d.added} · Skipped: ${d.skipped} · Expires in 5 minutes`;otpPaste.value="";}catch(e){otpPasteMsg.textContent=e.message;}}
+async function bulkOtpCsv(){const f=otpCsv.files[0];if(!f){otpCsvMsg.textContent="Choose a CSV file.";return;}try{const fd=new FormData();fd.append("file",f);const d=await req("/api/admin/otps/bulk",{method:"POST",body:fd});otpCsvMsg.textContent=`Attached: ${d.added} · Skipped: ${d.skipped} · Expires in 5 minutes`;otpCsv.value="";}catch(e){otpCsvMsg.textContent=e.message;}}

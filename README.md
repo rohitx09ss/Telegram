@@ -34,3 +34,21 @@ This is a minimal starter, not a production-hardened commercial service. Before 
 - Deleted History is visible in the admin panel.
 
 This starter does not store, export, or distribute preloaded OTPs. OTP handling should be implemented only for a user-initiated verification challenge, with results restricted to that same authorized user.
+
+## Challenge-bound OTP attachment (admin)
+
+OTP CSV and bulk paste use exactly these columns:
+
+```csv
+request_id,country_code,phone,otp
+ORDER_ID_FROM_RESERVE,+91,9876543210,123456
+```
+
+`request_id` must be the `order_id` returned by `POST /api/numbers/reserve`. The reserved phone and country code must match. The OTP is held for at most five minutes, is bound to the API key that reserved that order, and is returned once only. The consuming client calls:
+
+```http
+POST /api/orders/ORDER_ID_FROM_RESERVE/otp/consume
+X-API-Key: YOUR_API_KEY
+```
+
+The endpoint marks the order completed after successful one-time consumption. Expired OTP documents are removed by MongoDB TTL cleanup. This is not a general OTP lookup endpoint; arbitrary phone-number OTP lookup and bulk OTP export are not supported.

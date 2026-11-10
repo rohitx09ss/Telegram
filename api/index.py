@@ -20,6 +20,8 @@ try:
     client = MongoClient(uri, serverSelectionTimeoutMS=5000)
     client.admin.command("ping")
     db = client[os.environ.get("MONGODB_DB", "numberhub")]
+    db.challenge_otps.create_index("expires_at", expireAfterSeconds=0)
+    db.challenge_otps.create_index("order_id", unique=True)
 except Exception:
     db = None
 
@@ -54,6 +56,7 @@ def api_key_required(fn):
         key = db.api_keys.find_one({"hash": digest, "active": True})
         if not key:
             return jsonify(ok=False, error="Invalid or revoked API key"), 401
+        request.api_key_hash = digest
         return fn(*args, **kwargs)
     return wrapper
 
@@ -167,6 +170,39 @@ def bulk_numbers():
     except Exception:
         return jsonify(ok=False, error="Could not parse CSV; use UTF-8 CSV with country_code,phone columns"), 400
 
+@app.post("/api/admin/otps/bulk")
+@db_required
+@admin_required
+def bulk_import_challenge_otps():
+    """Attach short-lived OTPs to existing reserved orders only."""
+    file = request.files.get("file")
+    raw_text = request.form.get("text", "")
+    try:
+        if file:
+            raw_text = file.stream.read().decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(raw_text))
+        required = {"request_id", "country_code", "phone", "otp"}
+        if not reader.fieldnames or not required.issubset({x.strip() for x in reader.fieldnames}):
+            return jsonify(ok=False, error="Required columns: request_id,country_code,phone,otp"), 400
+        added = skipped = 0
+        for row in reader:
+            order_id = (row.get("request_id") or "").strip()
+            cc = (row.get("country_code") or "").strip()
+            phone = re.sub(r"\s+", "", (row.get("phone") or "").strip())
+            otp = (row.get("otp") or "").strip()
+            if not order_id or not re.fullmatch(r"\+[1-9]\d{0,3}", cc) or not re.fullmatch(r"\d{5,15}", phone) or not re.fullmatch(r"\d{4,8}", otp):
+                skipped += 1; continue
+            order = db.numbers.find_one({"order_id": order_id, "status": "reserved", "phone": phone, "country_code": cc})
+            if not order or db.challenge_otps.find_one({"order_id": order_id}):
+                skipped += 1; continue
+            db.challenge_otps.insert_one({"order_id": order_id, "phone": phone, "country_code": cc,
+                "otp": otp, "api_key_hash": order.get("api_key_hash"), "created_at": datetime.now(timezone.utc),
+                "expires_at": datetime.now(timezone.utc) + __import__("datetime").timedelta(minutes=5)})
+            added += 1
+        return jsonify(ok=True, added=added, skipped=skipped, expires_in_seconds=300)
+    except Exception:
+        return jsonify(ok=False, error="Invalid CSV. Use UTF-8 CSV with request_id,country_code,phone,otp"), 400
+
 @app.delete("/api/admin/numbers/<number_id>")
 @db_required
 @admin_required
@@ -227,7 +263,7 @@ def reserve_number():
     order_id = secrets.token_urlsafe(18)
     doc = db.numbers.find_one_and_update(
         {"_id":ObjectId(number_id),"status":"available"},
-        {"$set":{"status":"reserved","reserved_at":now(),"order_id":order_id}},
+        {"$set":{"status":"reserved","reserved_at":now(),"order_id":order_id,"api_key_hash":request.api_key_hash}},
         return_document=ReturnDocument.AFTER)
     if not doc: return jsonify(ok=False,error="Number unavailable"),409
     return jsonify(ok=True,order_id=order_id,number=public_number(doc)),201
@@ -236,9 +272,23 @@ def reserve_number():
 @db_required
 @api_key_required
 def order_status(order_id):
-    doc = db.numbers.find_one({"order_id":order_id})
+    doc = db.numbers.find_one({"order_id":order_id, "api_key_hash": request.api_key_hash})
     if not doc: return jsonify(ok=False,error="Order not found"),404
     return jsonify(ok=True,order_id=order_id,status=doc["status"],number=public_number(doc))
+
+@app.post("/api/orders/<order_id>/otp/consume")
+@db_required
+@api_key_required
+def consume_order_otp(order_id):
+    order = db.numbers.find_one({"order_id": order_id, "status": "reserved", "api_key_hash": request.api_key_hash})
+    if not order:
+        return jsonify(ok=False, error="Order not found or not owned by this API key"), 404
+    otp_doc = db.challenge_otps.find_one_and_delete({"order_id": order_id,
+        "api_key_hash": request.api_key_hash, "expires_at": {"$gt": datetime.now(timezone.utc)}})
+    if not otp_doc:
+        return jsonify(ok=False, error="OTP unavailable, expired, or already consumed"), 404
+    db.numbers.update_one({"_id": order["_id"]}, {"$set": {"status": "completed", "completed_at": now()}})
+    return jsonify(ok=True, order_id=order_id, otp=otp_doc["otp"], one_time=True)
 
 @app.errorhandler(404)
 def not_found(_):
